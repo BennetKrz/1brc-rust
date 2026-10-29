@@ -62,42 +62,45 @@ fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, C
 }
 
 unsafe fn process_chunk(thread_id: usize, thread_count: usize, mmf: Arc<Mmap>) -> Result<HashMap<String, ChunkResult>> {
-    let (mut cur, end) = get_start_end(thread_id, thread_count, &mmf);
+    unsafe {
 
-    println!("ThreadId: {:?}: Start: {:?} to End {:?}", thread_id, cur as usize, end as usize);
+        let (mut cur, end) = get_start_end(thread_id, thread_count, &mmf);
 
-    let mut result: HashMap<String, ChunkResult> = HashMap::new();
-    while cur < end {
-        // Getting the name of the city
-        let mut city = vec![];
-        while *cur != 59u8 {
-            city.push(*cur);
+        println!("ThreadId: {:?}: Start: {:?} to End {:?}", thread_id, cur as usize, end as usize);
+
+        let mut result: HashMap<String, ChunkResult> = HashMap::new();
+        while cur < end {
+            // Getting the name of the city
+            let mut city = vec![];
+            while *cur != 59u8 {
+                city.push(*cur);
+                cur = cur.add(1);
+            }
+            cur = cur.add(1);
+
+            let city = city.iter().map(|u| *u as char).collect::<String>();
+            //println!("Name: {}", city);
+
+            // Get temp
+            let mut temp = vec![];
+            while *cur != 10 {
+                temp.push(*cur);
+                cur = cur.add(1);
+            }
+
+            let temp = temp.iter().map(|u| *u as char).collect::<String>();
+            //println!("Temp: {}", temp);
+            let temp = temp.parse::<f64>()?;
+
+            add_to_results(&mut result, &city, temp);
+
             cur = cur.add(1);
         }
-        cur = cur.add(1);
 
-        let city = city.iter().map(|u| *u as char).collect::<String>();
-        //println!("Name: {}", city);
+        println!("{}", result.len());
 
-        // Get temp
-        let mut temp = vec![];
-        while *cur != 10 {
-            temp.push(*cur);
-            cur = cur.add(1);
-        }
-
-        let temp = temp.iter().map(|u| *u as char).collect::<String>();
-        //println!("Temp: {}", temp);
-        let temp = temp.parse::<f64>()?;
-
-        add_to_results(&mut result, &city, temp);
-
-        cur = cur.add(1);
+        Ok(result)
     }
-
-    println!("{}", result.len());
-
-    Ok(result)
 }
 
 unsafe fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: &String, temp: f64) {
@@ -123,33 +126,37 @@ unsafe fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: &Strin
 }
 
 unsafe fn get_start_end(thread_id: usize, thread_count: usize, mmf: &Arc<Mmap>) -> (*const u8, *const u8) {
-    let count = mmf.len() / thread_count;
-    let start = count * thread_id;
+    unsafe {
+        let count = mmf.len() / thread_count;
+        let start = count * thread_id;
 
-    let ptr = mmf.as_ptr();
-    let end = ptr.add(start + count);
+        let ptr = mmf.as_ptr();
+        let end = ptr.add(start + count);
 
-    let mut cur = ptr.add(start);
+        let mut cur = ptr.add(start);
 
-    cur = find_next_newline(cur, &mmf);
-    if start != 0 {
-        cur = cur.add(1);
+        cur = find_next_newline(cur, &mmf);
+        if start != 0 {
+            cur = cur.add(1);
+        }
+        let end = find_next_newline(end, &mmf);
+        (cur, end)
     }
-    let end = find_next_newline(end, &mmf);
-    (cur, end)
 }
 
 unsafe fn find_next_newline(cur: *const u8, mmf: &Arc<Mmap>) -> *const u8 {
-    if mmf.as_ptr() == cur {
-        return cur;
-    }
+    unsafe {
+        if mmf.as_ptr() == cur {
+            return cur;
+        }
 
-    let mut next = cur.sub(1);
-    while *next != 10u8 {
-        next = next.sub(1);
-    }
+        let mut next = cur.sub(1);
+        while *next != 10u8 {
+            next = next.sub(1);
+        }
 
-    next
+        next
+    }
 }
 
 fn build_mmf() -> Result<Arc<Mmap>> {
