@@ -10,15 +10,23 @@ use anyhow::Result;
 fn main() -> Result<()> {
     let thread_count = thread::available_parallelism()?.get();
     let mmf = build_mmf()?;
+    let data = &*mmf;
 
-    let mut handles = vec![];
-    for thread_id in 0..thread_count {
-        let mmf = mmf.clone();
 
-    handles.push(thread::spawn(move || process_chunk(thread_id, thread_count, mmf)));
-    }
+    let results = thread::scope(|s| {
+        let mut handles = vec![];
+        for thread_id in 0..thread_count {
+            handles.push(s.spawn(move || process_chunk(thread_id, thread_count, data)));
+        }
 
-    let results = handles.into_iter().map(|h| h.join().unwrap().unwrap()).collect::<Vec<HashMap<String, ChunkResult>>>();
+        let mut results = vec![];
+        for h in handles {
+            results.push(h.join().unwrap().unwrap());
+        }
+        results
+    });
+
+
     let final_results = analyze_results(results);
 
     for r in final_results {
@@ -31,18 +39,19 @@ fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, C
     let mut final_result: HashMap<String, ChunkResult> = HashMap::new();
     for result in results {
         for (city, result) in result {
-            if final_result.contains_key(&city) {
-                let r = final_result.get_mut(&city).unwrap();
-                r.accu += result.accu;
-                r.count += result.count;
-                if r.max < result.max {
-                    r.max = result.max;
-                }
-                if r.min > result.min {
-                    r.min = result.min;
-                }
-            } else {
-                final_result.insert(city, result);
+            let r = final_result.entry(city).or_insert(ChunkResult {
+                min: 0.0,
+                max: 0.0,
+                accu: 0.0,
+                count: 0,
+            });
+            r.accu += result.accu;
+            r.count += result.count;
+            if r.max < result.max {
+                r.max = result.max;
+            }
+            if r.min > result.min {
+                r.min = result.min;
             }
         }
     }
@@ -52,24 +61,23 @@ fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, C
     v
 }
 
-fn process_chunk(thread_id: usize, thread_count: usize, mmf: Arc<Mmap>) -> Result<HashMap<String, ChunkResult>> {
+fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<HashMap<String, ChunkResult>> {
     unsafe {
-
-        let (mut cur, end) = get_start_end(thread_id, thread_count, &mmf);
-
-        //println!("ThreadId: {:?}: Start: {:?} to End {:?}", thread_id, cur as usize, end as usize);
+        let (mut cur, end) = get_start_end(thread_id, thread_count, data);
 
         let mut result: HashMap<String, ChunkResult> = HashMap::new();
         while cur < end {
             // Getting the name of the city
             let mut city = vec![];
+            let start = cur;
             while *cur != 59u8 {
                 city.push(*cur);
                 cur = cur.add(1);
             }
+            let end = cur;
             cur = cur.add(1);
 
-            let city = String::from_utf8(city)?;
+            let city = String::from_utf8_unchecked(city);
             //println!("Name: {}", city);
 
             // Get temp
@@ -79,11 +87,11 @@ fn process_chunk(thread_id: usize, thread_count: usize, mmf: Arc<Mmap>) -> Resul
                 cur = cur.add(1);
             }
 
-            let temp = String::from_utf8(temp)?;
+            let temp = String::from_utf8_unchecked(temp);
             //println!("Temp: {}", temp);
             let temp = temp.parse::<f64>()?;
 
-            add_to_results(&mut result, &city, temp);
+            add_to_results(&mut result, city, temp);
 
             cur = cur.add(1);
         }
@@ -92,54 +100,50 @@ fn process_chunk(thread_id: usize, thread_count: usize, mmf: Arc<Mmap>) -> Resul
     }
 }
 
-fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: &String, temp: f64) {
-    if result.contains_key(city) {
-        let chunk_result = result.get_mut(city).unwrap();
-        if chunk_result.min > temp {
-            chunk_result.min = temp;
-        }
-        if chunk_result.max < temp {
-            chunk_result.max = temp;
-        }
-        chunk_result.accu += temp;
-        chunk_result.count += 1;
-    } else {
-        let chunk_result = ChunkResult {
-            max: temp,
-            min: temp,
-            accu: temp,
-            count: 1
-        };
-        result.insert(city.clone(), chunk_result);
+fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: String, temp: f64) {
+    let chunk_result = result.entry(city.to_owned()).or_insert(ChunkResult {
+        max: 0f64,
+        min: 0f64,
+        accu: 0f64,
+        count: 0
+    });
+
+    if chunk_result.min > temp {
+        chunk_result.min = temp;
     }
+    if chunk_result.max < temp {
+        chunk_result.max = temp;
+    }
+    chunk_result.accu += temp;
+    chunk_result.count += 1;
 }
 
-fn get_start_end(thread_id: usize, thread_count: usize, mmf: &Arc<Mmap>) -> (*const u8, *const u8) {
+fn get_start_end(thread_id: usize, thread_count: usize, data: &[u8]) -> (*const u8, *const u8) {
     unsafe {
-        let count = mmf.len() / thread_count;
+        let count = data.len() / thread_count;
         let start = count * thread_id;
 
-        let ptr = mmf.as_ptr();
+        let ptr = data.as_ptr();
         let end = ptr.add(start + count);
 
         let mut cur = ptr.add(start);
 
-        cur = find_next_newline(cur, &mmf);
+        cur = find_next_newline(cur, data);
         if start != 0 {
             cur = cur.add(1);
         }
 
-        let mut end = find_next_newline(end, &mmf);
+        let mut end = find_next_newline(end, data);
         if thread_id == thread_count - 1 {
-            end = mmf.as_ptr().add(mmf.len());
+            end = data.as_ptr().add(data.len());
         }
         (cur, end)
     }
 }
 
-fn find_next_newline(cur: *const u8, mmf: &Arc<Mmap>) -> *const u8 {
+fn find_next_newline(cur: *const u8, data: &[u8]) -> *const u8 {
     unsafe {
-        if mmf.as_ptr() == cur {
+        if data.as_ptr() == cur {
             return cur;
         }
 
@@ -152,9 +156,9 @@ fn find_next_newline(cur: *const u8, mmf: &Arc<Mmap>) -> *const u8 {
     }
 }
 
-fn build_mmf() -> Result<Arc<Mmap>> {
+fn build_mmf() -> Result<Mmap> {
     let f = File::open(env::home_dir().unwrap().join("git/1brc-rust/measurements.txt"))?;
-    Ok(Arc::new(unsafe { MmapOptions::new().map(&f)? }))
+    Ok(unsafe { MmapOptions::new().map(&f)? })
 }
 
 struct ChunkResult {
