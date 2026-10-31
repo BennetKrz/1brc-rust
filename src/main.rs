@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::sync::Arc;
 use std::{env, thread};
 use memmap::{Mmap, MmapOptions};
 
@@ -13,17 +12,11 @@ fn main() -> Result<()> {
     let data = &*mmf;
 
 
-    let results = thread::scope(|s| {
-        let mut handles = vec![];
-        for thread_id in 0..thread_count {
-            handles.push(s.spawn(move || process_chunk(thread_id, thread_count, data)));
-        }
-
-        let mut results = vec![];
-        for h in handles {
-            results.push(h.join().unwrap().unwrap());
-        }
-        results
+    let results: Vec<_> = thread::scope(|s| {
+        let handles: Vec<_> = (0..thread_count)
+            .map(|id| s.spawn(move || process_chunk(id, thread_count, data)))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap().unwrap()).collect()
     });
 
 
@@ -40,8 +33,8 @@ fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, C
     for result in results {
         for (city, result) in result {
             let r = final_result.entry(city).or_insert(ChunkResult {
-                min: 0.0,
-                max: 0.0,
+                min: f64::MAX,
+                max: f64::MIN,
                 accu: 0.0,
                 count: 0,
             });
@@ -70,30 +63,29 @@ fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<H
             // Getting the name of the city
             let mut city = vec![];
             let start = cur;
-            while *cur != 59u8 {
-                city.push(*cur);
-                cur = cur.add(1);
+            while data[cur] != 59u8 {
+                city.push(data[cur]);
+                cur += 1;
             }
             let end = cur;
-            cur = cur.add(1);
+            cur += 1;
 
             let city = String::from_utf8_unchecked(city);
             //println!("Name: {}", city);
 
             // Get temp
             let mut temp = vec![];
-            while *cur != 10 {
-                temp.push(*cur);
-                cur = cur.add(1);
+            while data[cur] != 10 {
+                temp.push(data[cur]);
+                cur += 1;
             }
 
             let temp = String::from_utf8_unchecked(temp);
-            //println!("Temp: {}", temp);
             let temp = temp.parse::<f64>()?;
 
             add_to_results(&mut result, city, temp);
 
-            cur = cur.add(1);
+            cur += 1;
         }
 
         Ok(result)
@@ -101,9 +93,9 @@ fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<H
 }
 
 fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: String, temp: f64) {
-    let chunk_result = result.entry(city.to_owned()).or_insert(ChunkResult {
-        max: 0f64,
-        min: 0f64,
+    let chunk_result = result.entry(city).or_insert(ChunkResult {
+        min: f64::MAX,
+        max: f64::MIN,
         accu: 0f64,
         count: 0
     });
@@ -118,42 +110,37 @@ fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: String, temp:
     chunk_result.count += 1;
 }
 
-fn get_start_end(thread_id: usize, thread_count: usize, data: &[u8]) -> (*const u8, *const u8) {
-    unsafe {
-        let count = data.len() / thread_count;
-        let start = count * thread_id;
+fn get_start_end(thread_id: usize, thread_count: usize, data: &[u8]) -> (usize, usize) {
+    let count = data.len() / thread_count;
+    let start = count * thread_id;
 
-        let ptr = data.as_ptr();
-        let end = ptr.add(start + count);
+    let end = start + count;
 
-        let mut cur = ptr.add(start);
+    let mut cur = start;
 
-        cur = find_next_newline(cur, data);
-        if start != 0 {
-            cur = cur.add(1);
-        }
-
-        let mut end = find_next_newline(end, data);
-        if thread_id == thread_count - 1 {
-            end = data.as_ptr().add(data.len());
-        }
-        (cur, end)
+    cur = find_next_newline(cur, data);
+    if start != 0 {
+        cur += 1;
     }
+
+    let mut end = find_next_newline(end, data);
+    if thread_id == thread_count - 1 {
+        end = data.len();
+    }
+    (cur, end)
 }
 
-fn find_next_newline(cur: *const u8, data: &[u8]) -> *const u8 {
-    unsafe {
-        if data.as_ptr() == cur {
-            return cur;
-        }
-
-        let mut next = cur.sub(1);
-        while *next != 10u8 {
-            next = next.sub(1);
-        }
-
-        next
+fn find_next_newline(cur: usize, data: &[u8]) -> usize {
+    if cur == 0 {
+        return cur;
     }
+
+    let mut next = cur - 1;
+    while data[next] != 10u8 {
+        next -= 1;
+    }
+
+    next
 }
 
 fn build_mmf() -> Result<Mmap> {
@@ -170,6 +157,6 @@ struct ChunkResult {
 
 impl Display for ChunkResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{:.1}/{}", self.min, self.accu / self.count as f64, self.max)
+        write!(f, "{:.1}/{:.1}/{:.1}", self.min, self.accu / self.count as f64, self.max)
     }
 }
