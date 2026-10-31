@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::sync::Arc;
-use std::thread;
+use std::{env, thread};
 use memmap::{Mmap, MmapOptions};
 
 use anyhow::Result;
@@ -153,7 +153,7 @@ fn find_next_newline(cur: *const u8, mmf: &Arc<Mmap>) -> *const u8 {
 }
 
 fn build_mmf() -> Result<Arc<Mmap>> {
-    let f = File::open("/home/bennet/git/1brc-rust/measurements.txt")?;
+    let f = File::open(env::home_dir().unwrap().join("git/1brc-rust/measurements.txt"))?;
     Ok(Arc::new(unsafe { MmapOptions::new().map(&f)? }))
 }
 
