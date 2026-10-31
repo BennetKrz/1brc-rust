@@ -10,3 +10,6 @@ anyhow = "1.0.104"
 [profile.profiling]
 inherits = "release"
 debug = true
+opt-level = 3
+overflow-checks = false
+lto = "fat"
