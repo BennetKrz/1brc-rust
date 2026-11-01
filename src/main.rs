@@ -80,6 +80,8 @@ fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<H
 
         let temp = &data[start..end];
         let temp = parse_float(temp);
+        //let temp = String::from_utf8_lossy(temp);
+        //let temp = temp.parse::<f64>()?;
         //println!("Temp: {}", temp);
 
         add_to_results(&mut result, city, temp);
