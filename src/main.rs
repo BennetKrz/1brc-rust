@@ -6,6 +6,8 @@ use memmap::{Mmap, MmapOptions};
 
 use anyhow::Result;
 
+const ASCII_NUMBER_OFFSET: u8 = 48;
+
 fn main() -> Result<()> {
     let thread_count = thread::available_parallelism()?.get();
     let mmf = build_mmf()?;
@@ -28,8 +30,8 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, ChunkResult)> {
-    let mut final_result: HashMap<String, ChunkResult> = HashMap::new();
+fn analyze_results(results: Vec<HashMap<&[u8], ChunkResult>>) -> Vec<(String, ChunkResult)> {
+    let mut final_result: HashMap<&[u8], ChunkResult> = HashMap::new();
     for result in results {
         for (city, result) in result {
             let r = final_result.entry(city).or_insert(ChunkResult {
@@ -49,51 +51,72 @@ fn analyze_results(results: Vec<HashMap<String, ChunkResult>>) -> Vec<(String, C
         }
     }
 
-    let mut v: Vec<(String, ChunkResult)> = final_result.into_iter().collect();
+    let mut v: Vec<(String, ChunkResult)> = final_result.into_iter().map(|x| (String::from_utf8_lossy(x.0).to_string(), x.1)).collect::<Vec<(String, ChunkResult)>>();
     v.sort_by(|a, b| a.0.cmp(&b.0));
     v
 }
 
-fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<HashMap<String, ChunkResult>> {
-    unsafe {
-        let (mut cur, end) = get_start_end(thread_id, thread_count, data);
+fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<HashMap<&[u8], ChunkResult>> {
+    let (mut cur, end) = get_start_end(thread_id, thread_count, data);
 
-        let mut result: HashMap<String, ChunkResult> = HashMap::new();
-        while cur < end {
-            // Getting the name of the city
-            let start = cur;
-            while data[cur] != 59u8 {
-                cur += 1;
-            }
-            let end = cur;
-            cur += 1;
-
-            let city = &data[start..end];
-            let city = String::from_utf8_lossy(city);
-            //println!("Name: {}", city);
-
-            // Get temp
-            let start = cur;
-            while data[cur] != 10 {
-                cur += 1;
-            }
-            let end = cur;
-
-            let temp = &data[start..end];
-            let temp = String::from_utf8_lossy(temp);
-            let temp = temp.parse::<f64>()?;
-            //println!("Temp: {}", temp);
-
-            add_to_results(&mut result, city.to_string(), temp);
-
+    let mut result: HashMap<&[u8], ChunkResult> = HashMap::new();
+    while cur < end {
+        // Getting the name of the city
+        let start = cur;
+        while data[cur] != 59u8 {
             cur += 1;
         }
+        let end = cur;
+        cur += 1;
 
-        Ok(result)
+        let city = &data[start..end];
+
+        // Get temp
+        let start = cur;
+        while data[cur] != 10 {
+            cur += 1;
+        }
+        let end = cur;
+
+        let temp = &data[start..end];
+        let temp = parse_float(temp);
+        //println!("Temp: {}", temp);
+
+        add_to_results(&mut result, city, temp);
+
+        cur += 1;
     }
+
+    Ok(result)
 }
 
-fn add_to_results(result: &mut HashMap<String, ChunkResult>, city: String, temp: f64) {
+fn parse_float(range: &[u8]) -> f64 {
+    let minus = range[0] == 45;
+    let skip = if minus { 2 } else { 1 };
+    let mut result: f64 = (range[skip - 1] - ASCII_NUMBER_OFFSET) as f64;
+    let mut count: f64 = 0.0;
+    let mut before_period = true;
+    for c in range.iter().skip(skip) {
+        if *c == 46 {
+            before_period = false;
+            continue
+        }
+        if !before_period {
+            count += 1.0;
+        }
+        result *= 10.0;
+        result += (*c - ASCII_NUMBER_OFFSET) as f64;
+    }
+
+    result /= count * 10.0;
+    if minus {
+        result *= -1.0;
+    }
+
+    result
+}
+
+fn add_to_results<'a>(result: &mut HashMap<&'a [u8], ChunkResult>, city: &'a [u8], temp: f64) {
     let chunk_result = result.entry(city).or_insert(ChunkResult {
         min: f64::MAX,
         max: f64::MIN,
@@ -119,19 +142,19 @@ fn get_start_end(thread_id: usize, thread_count: usize, data: &[u8]) -> (usize, 
 
     let mut cur = start;
 
-    cur = find_next_newline(cur, data);
+    cur = find_prev_newline(cur, data);
     if start != 0 {
         cur += 1;
     }
 
-    let mut end = find_next_newline(end, data);
+    let mut end = find_prev_newline(end, data);
     if thread_id == thread_count - 1 {
         end = data.len();
     }
     (cur, end)
 }
 
-fn find_next_newline(cur: usize, data: &[u8]) -> usize {
+fn find_prev_newline(cur: usize, data: &[u8]) -> usize {
     if cur == 0 {
         return cur;
     }
