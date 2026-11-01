@@ -61,29 +61,30 @@ fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<H
         let mut result: HashMap<String, ChunkResult> = HashMap::new();
         while cur < end {
             // Getting the name of the city
-            let mut city = vec![];
             let start = cur;
             while data[cur] != 59u8 {
-                city.push(data[cur]);
                 cur += 1;
             }
             let end = cur;
             cur += 1;
 
-            let city = String::from_utf8_unchecked(city);
+            let city = &data[start..end];
+            let city = String::from_utf8_lossy(city);
             //println!("Name: {}", city);
 
             // Get temp
-            let mut temp = vec![];
+            let start = cur;
             while data[cur] != 10 {
-                temp.push(data[cur]);
                 cur += 1;
             }
+            let end = cur;
 
-            let temp = String::from_utf8_unchecked(temp);
+            let temp = &data[start..end];
+            let temp = String::from_utf8_lossy(temp);
             let temp = temp.parse::<f64>()?;
+            //println!("Temp: {}", temp);
 
-            add_to_results(&mut result, city, temp);
+            add_to_results(&mut result, city.to_string(), temp);
 
             cur += 1;
         }
