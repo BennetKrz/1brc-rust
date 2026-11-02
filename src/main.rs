@@ -1,8 +1,8 @@
+use memmap::{Mmap, MmapOptions};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::{env, thread};
-use memmap::{Mmap, MmapOptions};
 
 use anyhow::Result;
 
@@ -13,14 +13,15 @@ fn main() -> Result<()> {
     let mmf = build_mmf()?;
     let data = &*mmf;
 
-
     let results: Vec<_> = thread::scope(|s| {
         let handles: Vec<_> = (0..thread_count)
             .map(|id| s.spawn(move || process_chunk(id, thread_count, data)))
             .collect();
-        handles.into_iter().map(|h| h.join().unwrap().unwrap()).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap().unwrap())
+            .collect()
     });
-
 
     let final_results = analyze_results(results);
 
@@ -30,33 +31,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn analyze_results(results: Vec<HashMap<&[u8], ChunkResult>>) -> Vec<(String, ChunkResult)> {
-    let mut final_result: HashMap<&[u8], ChunkResult> = HashMap::new();
-    for result in results {
-        for (city, result) in result {
-            let r = final_result.entry(city).or_insert(ChunkResult {
-                min: f64::MAX,
-                max: f64::MIN,
-                accu: 0.0,
-                count: 0,
-            });
-            r.accu += result.accu;
-            r.count += result.count;
-            if r.max < result.max {
-                r.max = result.max;
-            }
-            if r.min > result.min {
-                r.min = result.min;
-            }
-        }
-    }
-
-    let mut v: Vec<(String, ChunkResult)> = final_result.into_iter().map(|x| (String::from_utf8_lossy(x.0).to_string(), x.1)).collect::<Vec<(String, ChunkResult)>>();
-    v.sort_by(|a, b| a.0.cmp(&b.0));
-    v
-}
-
-fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<HashMap<&[u8], ChunkResult>> {
+fn process_chunk(
+    thread_id: usize,
+    thread_count: usize,
+    data: &[u8],
+) -> Result<HashMap<&[u8], ChunkResult>> {
     let (mut cur, end) = get_start_end(thread_id, thread_count, data);
 
     let mut result: HashMap<&[u8], ChunkResult> = HashMap::new();
@@ -66,21 +45,17 @@ fn process_chunk(thread_id: usize, thread_count: usize, data: &[u8]) -> Result<H
         while data[cur] != 59u8 {
             cur += 1;
         }
-        let end = cur;
+        let city = &data[start..cur];
         cur += 1;
-
-        let city = &data[start..end];
 
         // Get temp
         let start = cur;
         while data[cur] != 10 {
             cur += 1;
         }
-        let end = cur;
 
-        let temp = &data[start..end];
+        let temp = &data[start..cur];
         let temp = parse_float(temp);
-        //println!("Temp: {}", temp);
 
         add_to_results(&mut result, city, temp);
 
@@ -99,7 +74,7 @@ fn parse_float(range: &[u8]) -> f64 {
     for c in range.iter().skip(skip) {
         if *c == 46 {
             before_period = false;
-            continue
+            continue;
         }
         if !before_period {
             count += 1.0;
@@ -121,7 +96,7 @@ fn add_to_results<'a>(result: &mut HashMap<&'a [u8], ChunkResult>, city: &'a [u8
         min: f64::MAX,
         max: f64::MIN,
         accu: 0f64,
-        count: 0
+        count: 0,
     });
 
     if chunk_result.min > temp {
@@ -168,19 +143,58 @@ fn find_prev_newline(cur: usize, data: &[u8]) -> usize {
 }
 
 fn build_mmf() -> Result<Mmap> {
-    let f = File::open(env::home_dir().unwrap().join("git/1brc-rust/measurements.txt"))?;
+    let f = File::open(
+        env::home_dir()
+            .unwrap()
+            .join("git/1brc-rust/measurements.txt"),
+    )?;
     Ok(unsafe { MmapOptions::new().map(&f)? })
+}
+
+fn analyze_results(results: Vec<HashMap<&[u8], ChunkResult>>) -> Vec<(String, ChunkResult)> {
+    let mut final_result: HashMap<&[u8], ChunkResult> = HashMap::new();
+    for result in results {
+        for (city, result) in result {
+            let r = final_result.entry(city).or_insert(ChunkResult {
+                min: f64::MAX,
+                max: f64::MIN,
+                accu: 0.0,
+                count: 0,
+            });
+            r.accu += result.accu;
+            r.count += result.count;
+            if r.max < result.max {
+                r.max = result.max;
+            }
+            if r.min > result.min {
+                r.min = result.min;
+            }
+        }
+    }
+
+    let mut v: Vec<(String, ChunkResult)> = final_result
+        .into_iter()
+        .map(|x| (String::from_utf8_lossy(x.0).to_string(), x.1))
+        .collect::<Vec<(String, ChunkResult)>>();
+    v.sort_by(|a, b| a.0.cmp(&b.0));
+    v
 }
 
 struct ChunkResult {
     pub min: f64,
     pub max: f64,
     pub accu: f64,
-    pub count: u64
+    pub count: u64,
 }
 
 impl Display for ChunkResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.1}/{:.1}/{:.1}", self.min, self.accu / self.count as f64, self.max)
+        write!(
+            f,
+            "{:.1}/{:.1}/{:.1}",
+            self.min,
+            self.accu / self.count as f64,
+            self.max
+        )
     }
 }
