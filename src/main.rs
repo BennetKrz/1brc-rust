@@ -5,6 +5,7 @@ use std::fs::File;
 use std::{env, thread};
 
 use anyhow::Result;
+use rustc_hash::FxHashMap;
 
 const ASCII_NUMBER_OFFSET: u8 = 48;
 
@@ -35,10 +36,10 @@ fn process_chunk(
     thread_id: usize,
     thread_count: usize,
     data: &[u8],
-) -> Result<HashMap<&[u8], ChunkResult>> {
+) -> Result<FxHashMap<&[u8], ChunkResult>> {
     let (mut cur, end) = get_start_end(thread_id, thread_count, data);
 
-    let mut result: HashMap<&[u8], ChunkResult> = HashMap::new();
+    let mut result: FxHashMap<&[u8], ChunkResult> = FxHashMap::default();
     while cur < end {
         // Getting the name of the city
         let start = cur;
@@ -91,7 +92,7 @@ fn parse_float(range: &[u8]) -> f64 {
     result
 }
 
-fn add_to_results<'a>(result: &mut HashMap<&'a [u8], ChunkResult>, city: &'a [u8], temp: f64) {
+fn add_to_results<'a>(result: &mut FxHashMap<&'a [u8], ChunkResult>, city: &'a [u8], temp: f64) {
     let chunk_result = result.entry(city).or_insert(ChunkResult {
         min: f64::MAX,
         max: f64::MIN,
@@ -151,7 +152,7 @@ fn build_mmf() -> Result<Mmap> {
     Ok(unsafe { MmapOptions::new().map(&f)? })
 }
 
-fn analyze_results(results: Vec<HashMap<&[u8], ChunkResult>>) -> Vec<(String, ChunkResult)> {
+fn analyze_results(results: Vec<FxHashMap<&[u8], ChunkResult>>) -> Vec<(String, ChunkResult)> {
     let mut final_result: HashMap<&[u8], ChunkResult> = HashMap::new();
     for result in results {
         for (city, result) in result {
